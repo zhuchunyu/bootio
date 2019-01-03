@@ -129,12 +129,12 @@ public class MessageEventHandler {
                 PipedOutputStream outputStream = new PipedOutputStream(inputStream);
                 channel.setOutputStream(outputStream);
 
-                sessions.put(client.getSessionId().toString(),
-                        new WebsocketSession(inputStream, out, channel, session));
-
-                new Thread(new OutHandler(client, client.getSessionId().toString())).start();
-
                 channel.connect(3 * 1000);
+
+                WebsocketSession websocketSession = new WebsocketSession(inputStream, out, channel, session);
+                sessions.put(client.getSessionId().toString(), websocketSession);
+
+                new Thread(new OutHandler(client, websocketSession)).start();
 
                 Map<String, Object> setTerminalOpts = new HashMap<>(8);
                 setTerminalOpts.put("cursorBlink", true);
@@ -200,7 +200,7 @@ public class MessageEventHandler {
     }
 
     @OnEvent(value = "close")
-    public void onClose(SocketIOClient client, AckRequest ackRequest, String data) {
+    public void onClose(SocketIOClient client) {
         WebsocketSession session = sessions.get(client.getSessionId().toString());
         if (session != null) {
             try {
@@ -254,37 +254,34 @@ public class MessageEventHandler {
 class OutHandler implements Runnable {
 
     private SocketIOClient client;
-    private String sessionId;
+    private WebsocketSession session;
 
-    public OutHandler(SocketIOClient client, String sessionId) {
+    public OutHandler(SocketIOClient client, WebsocketSession session) {
         this.client = client;
-        this.sessionId = sessionId;
+        this.session = session;
     }
 
     @Override
     public void run() {
-        WebsocketSession session = MessageEventHandler.sessions.get(sessionId);
-        if (session != null) {
-            try {
-                byte[] buf = new byte[1024];
-                InputStream inputStream = session.getSocketOut();
-                while (true) {
-                    int len = inputStream.read(buf);
-                    if (len == -1) {
-                        client.disconnect();
-                        session.getChannel().disconnect();
-                        session.getSession().disconnect();
+        try {
+            byte[] buf = new byte[1024];
+            InputStream inputStream = session.getSocketOut();
+            while (true) {
+                int len = inputStream.read(buf);
+                if (len == -1) {
+                    client.disconnect();
+                    session.getChannel().disconnect();
+                    session.getSession().disconnect();
 
-                        MessageEventHandler.sessions.remove(sessionId);
+                    MessageEventHandler.sessions.remove(client.getSessionId().toString());
 
-                        break;
-                    }
-
-                    client.sendEvent("data", new String(buf, 0, len, StandardCharsets.UTF_8));
+                    break;
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
+
+                client.sendEvent("data", new String(buf, 0, len, StandardCharsets.UTF_8));
             }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 }
